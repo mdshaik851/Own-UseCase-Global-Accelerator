@@ -1,0 +1,134 @@
+
+name: UC-10-Focal-Board-Using-Docker
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Install TFLint
+        uses: terraform-linters/setup-tflint@v3
+        with:
+          tflint_version: v0.48.0
+
+      - name: Run TFLint with AWS plugin
+        run: |
+          tflint --init --config .tflint.hcl
+          tflint
+        continue-on-error: true
+      
+      - name: Install Checkov
+        run: |
+          pip3 install --upgrade pip
+          pip3 install checkov
+
+      - name: Run Checkov
+        run: checkov -d . --framework terraform --soft-fail
+        working-directory: ./
+
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    needs: tflint  # Changed from 'lint-checks' to 'tflint'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::994466158061:role/OIDC-Github-action
+          # aws-region: us-west-1
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup OPA
+        run: |
+          curl -L -o opa https://openpolicyagent.org/downloads/v0.58.0/opa_linux_amd64
+          chmod +x opa
+          sudo mv opa /usr/local/bin/
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format
+        run: terraform fmt -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -out=tfplan.binary
+          terraform show -json tfplan.binary > tfplan.json
+
+      - name: Run OPA Validation
+        run: |
+          opa eval --format pretty --data terraform/terraform_policies.rego --input tfplan.json "data.terraform.policies"
+
+      - name: Terraform Test
+        id: test
+        run: terraform test
+        continue-on-error: true
+
+      - name: Terraform Apply
+        if: ${{ github.event.inputs.action == 'apply' }}
+        run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: terraform destroy -auto-approve
+  terraform-docs:
+    name: Terraform Docs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Render terraform docs and push changes back to PR
+        uses: terraform-docs/gh-actions@v1.1.0
+        with:
+          working-dir: .
+          output-file: README.md
+          output-method: inject
+          git-push: true
