@@ -132,6 +132,7 @@ resource "aws_instance" "app_primary" {
   }
 }
 
+
 # EC2 Instance in secondary region
 resource "aws_instance" "app_secondary" {
   provider          = aws.secondary
