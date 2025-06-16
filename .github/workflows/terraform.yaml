@@ -2,12 +2,12 @@
 name: UC-10-Focal-Board-Using-Docker
 
 on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
+  # pull_request:
+  #   branches:
+  #     - main
+  # push:
+  #   branches:
+  #     - main
   workflow_dispatch:
     inputs:
       action:
